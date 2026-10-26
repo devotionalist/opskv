@@ -1,0 +1,16 @@
+.git
+.build
+.aplan
+build
+build-*/
+.run
+data
+web/frontend/node_modules
+web/frontend
+**/node_modules
+**/.cache
+.cache
+agent-transcripts
+*.log
+compile_commands.json
+Dockerfile.local

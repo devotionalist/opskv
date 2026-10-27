@@ -28,9 +28,17 @@ CoprocessorResponse Coprocessor::execute(const CoprocessorRequest& req,
     if (!req.start_key.empty() && key < req.start_key) return true;
     if (!req.end_key.empty() && key >= req.end_key) return false;
     if (key.rfind("\xff\xffskv/", 0) == 0) return true;
+    if (!req.key_prefix.empty() && key.rfind(req.key_prefix, 0) != 0) return true;
     if (!req.value_prefix.empty() && rec.value.rfind(req.value_prefix, 0) != 0) return true;
-    out.pairs.push_back(CoprocessorPair{std::string(key), rec.value, rec.revision});
-    if (out.pairs.size() >= lim) {
+    ++out.matched;
+    if (!req.count_only) {
+      CoprocessorPair p;
+      p.key = std::string(key);
+      p.revision = rec.revision;
+      if (!req.keys_only) p.value = rec.value;
+      out.pairs.push_back(std::move(p));
+    }
+    if (out.matched >= lim) {
       out.truncated = true;
       return false;
     }

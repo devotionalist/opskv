@@ -90,6 +90,7 @@ inline constexpr std::string_view kOpAdminPlaceRegion = "ADMIN_PLACE_REGION";
 inline constexpr std::string_view kOpAdminSetEpoch = "ADMIN_SET_EPOCH";
 inline constexpr std::string_view kOpAdminCheckpoint = "ADMIN_CHECKPOINT";
 inline constexpr std::string_view kOpAdminRegionStats = "ADMIN_REGION_STATS";
+inline constexpr std::string_view kOpAdminCop = "ADMIN_COP";
 
 // storage_rpc 长超时匹配前缀（ENSURE / TRANSFER 覆盖 ENSURE_REGION / TRANSFER_LEADER）
 inline constexpr std::string_view kAdminEnsurePrefix = "ADMIN_ENSURE";
@@ -127,7 +128,6 @@ inline constexpr std::string_view kMetaAdminOps[] = {
 // ---------------------------------------------------------------------------
 namespace env {
 inline constexpr const char* kAdminToken = "SKV_ADMIN_TOKEN";
-inline constexpr const char* kRawNodeStore = "SKV_RAWNODE_STORE";
 inline constexpr const char* kPdAutoBalance = "SKV_PD_AUTO_BALANCE";
 inline constexpr const char* kPersistSync = "SKV_PERSIST_SYNC";
 inline constexpr const char* kSplitKeys = "SKV_SPLIT_KEYS";

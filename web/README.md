@@ -11,10 +11,10 @@ web/                    ← 本模块（独立 go.mod）
   static/               构建产物（Go embed）
   internal/
     api/                HTTP JSON API
-    cluster/            Meta / Storage TCP 客户端
+    cluster/            Meta / Storage **gRPC** 客户端（含 ExecLine）
 ```
 
-KV 调试经 Gateway gRPC，依赖同仓库 `client/go`（`replace`）。
+KV 调试经 Gateway gRPC，依赖同仓库 `client/go`（`replace`）。网络总览见 [docs/NETWORKING.md](../docs/NETWORKING.md)。
 
 ## 前端（TypeScript）
 

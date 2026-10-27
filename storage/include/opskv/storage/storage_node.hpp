@@ -87,7 +87,7 @@ class StorageNode {
   RaftKV* raftkv() { return raftkv_.get(); }
   Scheduler* scheduler() { return scheduler_.get(); }
   WatchHub& watch_hub() { return watch_hub_; }
-  /// Coprocessor 雏形：对本机 Region 做 range scan。
+  /// Coprocessor：对本机 Region range scan（key/value 前缀、keys_only、count_only）。
   CoprocessorResponse coprocessor_execute(uint32_t region_id, const CoprocessorRequest& req);
   const NodeConfig& config() const { return cfg_; }
   raft::GrpcRaftTransport& transport() { return transport_; }

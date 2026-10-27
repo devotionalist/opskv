@@ -2,28 +2,30 @@
 
 OpsKV 是基于 **Multi-Raft + RocksDB + gRPC** 的存算分离分布式 KV：Meta / Storage（C++）+ Gateway / 客户端 / Web 管控台（Go）。
 
-本文说明如何**安装、访问、读写与扩容**。不涉及内部设计与测试门禁。
+本文说明如何**安装、访问、读写与扩容**。架构 / 流程图 / SOP / 测试见 [README.md](./README.md) 分类索引；网络协议见 [NETWORKING.md](./NETWORKING.md)。
 
 ---
 
 ## 1. 组件与端口
 
-| 组件 | 作用 | 默认端口 |
-|------|------|----------|
-| Meta ×3 | 路由、拓扑、调度 | 8500 |
-| Storage ×N | 数据 + Multi-Raft | 9100（集群内同端口、不同 Pod） |
-| Gateway | 无状态计算入口（客户端连这里） | 19000 |
-| Web 管控台 | 拓扑 / 运维 / Console | 19100 |
+| 组件 | 作用 | 默认端口 | 协议 |
+|------|------|----------|------|
+| Meta ×3 | 路由、拓扑、调度 | 8500 | gRPC `MetaService` |
+| Storage ×N | 数据 + Multi-Raft | 9100（集群内同端口、不同 Pod） | gRPC Store / Raft / Admin |
+| Gateway | 无状态计算入口（客户端连这里） | 19000 | gRPC `KVService` / `DSService` |
+| Web 管控台 | 拓扑 / 运维 / Console | 19100 | HTTP（后端再调 gRPC） |
 
 ```
 Client / skv / Web Console
-        │
+        │ gRPC
         ▼
-   Gateway :19000  ──路由──▶  Meta ×3
-        │
+   Gateway :19000  ──gRPC──▶  Meta ×3
+        │ gRPC
         ▼
-   Storage ×N（RF=3）
+   Storage ×N（RF=3；节点间 Raft 亦为 gRPC）
 ```
+
+编译默认**不需要** Seastar；**必须**能编过 gRPC C++（系统库或 CMake FetchContent）。
 
 ---
 
@@ -130,6 +132,8 @@ helm uninstall opskv -n opskv
 
 ## 4. 扩容：加节点 ≠ 加入集群
 
+设计总览：[DATA_SCALE.md](./architecture/DATA_SCALE.md)。
+
 **务必分清两步：**
 
 | 阶段 | 做什么 | 谁做 | 结果 |
@@ -178,8 +182,11 @@ kubectl -n opskv get pods -l app.kubernetes.io/component=storage
 
 ### 4.3 缩容 Storage（摘要）
 
+设计：[DATA_SCALE_IN.md](./architecture/DATA_SCALE_IN.md)。
+
 1. 运维页下线 / `skv scale-in` → 等待迁空 → Tombstone  
-2. 再 `helm upgrade --set replicaCount.storage=<更小>`  
+2. `remove-tombstone`  
+3. 再 `helm upgrade --set replicaCount.storage=<更小>`  
 
 Draining 期间不要强杀 Pod。
 

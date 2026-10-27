@@ -54,6 +54,7 @@ struct SnapTask {
   uint32_t region_id{0};
   raft::SnapshotMeta meta;
   std::string data;  // 空则由 SnapWorker 拉取
+  uint32_t attempt{0};  // 已失败次数；用于 SnapWorker 重试上限
 };
 
 using PeerMsg = std::variant<TickMsg, RaftMessage, SignificantMsg, ApplyRes>;

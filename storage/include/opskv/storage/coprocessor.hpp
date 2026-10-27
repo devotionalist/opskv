@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file coprocessor.hpp
-// Coprocessor 雏形：服务端 prefix scan + 可选值前缀过滤。
+// 服务端 range scan：key/value 前缀过滤、keys_only、count_only。
 
 #pragma once
 
@@ -28,9 +28,12 @@ namespace opskv::storage {
 
 struct CoprocessorRequest {
   std::string start_key;
-  std::string end_key;       // exclusive；空=不限
-  std::string value_prefix;  // 空=不过滤
+  std::string end_key;        // exclusive；空=不限
+  std::string key_prefix;     // 空=不过滤
+  std::string value_prefix;   // 空=不过滤
   uint32_t limit{256};
+  bool keys_only{false};      // 不返回 value
+  bool count_only{false};     // 只计匹配数（pairs 空）
 };
 
 struct CoprocessorPair {
@@ -41,6 +44,7 @@ struct CoprocessorPair {
 
 struct CoprocessorResponse {
   std::vector<CoprocessorPair> pairs;
+  uint64_t matched{0};  // 扫描命中数（含 count_only；截断前计数）
   bool truncated{false};
 };
 

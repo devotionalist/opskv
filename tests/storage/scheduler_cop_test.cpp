@@ -70,6 +70,44 @@ TEST(CoprocessorTest, PrefixScanInRange) {
   opskv::KeyRange range;  // full
   auto resp = cop.execute(req, range);
   EXPECT_EQ(resp.pairs.size(), 2u);
+  EXPECT_EQ(resp.matched, 2u);
+  fs::remove_all(dir);
+}
+
+TEST(CoprocessorTest, KeyPrefixKeysOnlyAndCount) {
+  auto dir = fs::temp_directory_path() / ("skv_cop2_" + std::to_string(::getpid()));
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  opskv::storage::ShardEngineManager mgr(dir.string());
+  auto& eng = mgr.get_or_create(0);
+  eng.put("user:1", "alice", 1);
+  eng.put("user:2", "bob", 2);
+  eng.put("ord:1", "x", 3);
+  opskv::storage::Coprocessor cop(&eng);
+  opskv::KeyRange range;
+
+  opskv::storage::CoprocessorRequest keys;
+  keys.key_prefix = "user:";
+  keys.keys_only = true;
+  keys.limit = 10;
+  auto kr = cop.execute(keys, range);
+  ASSERT_EQ(kr.pairs.size(), 2u);
+  EXPECT_TRUE(kr.pairs[0].value.empty());
+  EXPECT_EQ(kr.matched, 2u);
+
+  opskv::storage::CoprocessorRequest cnt;
+  cnt.key_prefix = "user:";
+  cnt.count_only = true;
+  cnt.limit = 10;
+  auto cr = cop.execute(cnt, range);
+  EXPECT_TRUE(cr.pairs.empty());
+  EXPECT_EQ(cr.matched, 2u);
+
+  opskv::storage::CoprocessorRequest vp;
+  vp.value_prefix = "a";
+  vp.limit = 10;
+  auto vr = cop.execute(vp, range);
+  EXPECT_EQ(vr.matched, 1u);
   fs::remove_all(dir);
 }
 

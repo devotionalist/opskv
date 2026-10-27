@@ -282,6 +282,33 @@ std::string ExecLineHandler::handle_line(const std::string& line, AdminSession* 
       return facade_.node().admin_checkpoint(static_cast<uint32_t>(std::stoul(parts[1])),
                                              parts.size() == 3 ? parts[2] : "");
     }
+    // ADMIN_COP rid start_hex|- end_hex|- limit [kp=hex] [vp=hex] [keys_only] [count_only]
+    if (op == proto::kOpAdminCop && parts.size() >= 5) {
+      const uint32_t rid = static_cast<uint32_t>(std::stoul(parts[1]));
+      CoprocessorRequest req;
+      if (parts[2] != "-" && !from_hex(parts[2], &req.start_key)) return "ERR bad_hex";
+      if (parts[3] != "-" && !from_hex(parts[3], &req.end_key)) return "ERR bad_hex";
+      req.limit = static_cast<uint32_t>(std::stoul(parts[4]));
+      for (size_t i = 5; i < parts.size(); ++i) {
+        if (parts[i].rfind("kp=", 0) == 0) {
+          if (!from_hex(parts[i].substr(3), &req.key_prefix)) return "ERR bad_hex";
+        } else if (parts[i].rfind("vp=", 0) == 0) {
+          if (!from_hex(parts[i].substr(3), &req.value_prefix)) return "ERR bad_hex";
+        } else if (parts[i] == "keys_only") {
+          req.keys_only = true;
+        } else if (parts[i] == "count_only") {
+          req.count_only = true;
+        }
+      }
+      auto resp = facade_.node().coprocessor_execute(rid, req);
+      std::ostringstream oss;
+      oss << "OK COP " << resp.matched << " " << (resp.truncated ? 1 : 0) << " "
+          << resp.pairs.size();
+      for (const auto& p : resp.pairs) {
+        oss << ' ' << to_hex(p.key) << ':' << to_hex(p.value) << ':' << p.revision;
+      }
+      return oss.str();
+    }
     // ADMIN_REGION_STATS rid — Raft 软状态 + O2 延迟直方图摘要
     if (op == proto::kOpAdminRegionStats && parts.size() == 2) {
       uint32_t rid = static_cast<uint32_t>(std::stoul(parts[1]));

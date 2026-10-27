@@ -760,6 +760,27 @@ std::string StorageNode::admin_transfer_leader(uint32_t region_id, const std::st
     }
   }
   if (target_addr.empty()) return "ERR unknown_target";
+
+  // C7：让位前等目标追平已提交日志（match >= commit），避免转主后立刻空洞。
+  bool caught = false;
+  for (int i = 0; i < 100; ++i) {  // ~5s
+    g = multi_raft_->get(region_id);
+    if (!g || !g->is_leader()) {
+      return "ERR lost_leadership";
+    }
+    const auto st = g->soft_state();
+    if (g->match_index_of(target_id) >= st.commit_index) {
+      caught = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  if (!caught) {
+    SKV_WARN << "TRANSFER region=" << region_id << " target=" << target_id
+             << " not caught up (match < commit)";
+    return "ERR target_not_caught_up";
+  }
+
   if (!g->abdicate()) return "ERR abdicate_failed";
   bool camp_ok = false;
   try {
@@ -1962,20 +1983,13 @@ void StorageNode::start() {
   }
 
   transport_.start();
-  // S1 双轨：SKV_RAWNODE_STORE=1 启用 Ready 外提；默认 0 保持节点内 IO（IT/现网稳妥）。
-  const bool rawnode_store = [] {
-    if (const char* e = std::getenv(proto::env::kRawNodeStore)) {
-      return (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y');
-    }
-    return false;
-  }();
-
-  multi_raft_ = std::make_unique<raft::MultiRaft>([this, rawnode_store](uint32_t shard_id) {
+  // 生产路径固定 raftstore Ready 外提（无节点内 IO 双轨）。
+  multi_raft_ = std::make_unique<raft::MultiRaft>([this](uint32_t shard_id) {
     engines_->get_or_create(shard_id);
     raft::RaftNode::Options opts;
     opts.shard_id = shard_id;
     opts.self_id = cfg_.node_id;
-    opts.external_io = rawnode_store;
+    opts.external_io = true;
     {
       std::lock_guard<std::mutex> lock(create_mu_);
       auto it = pending_peers_.find(shard_id);
@@ -2051,21 +2065,9 @@ void StorageNode::start() {
       return true;
     };
 
-    raft::ApplyCallback on_apply_cb;
-    raft::TransportSend send_fn;
-    if (rawnode_store) {
-      // IO 经 Store Ready：persist_fn / transport_fn / apply_fn
-      on_apply_cb = nullptr;
-      send_fn = nullptr;
-    } else {
-      on_apply_cb = [this, shard_id](uint64_t index, const std::string& data) {
-        this->on_apply(shard_id, index, data);
-      };
-      send_fn = transport_.bind(shard_id);
-    }
-
-    auto node = std::make_shared<raft::RaftNode>(std::move(opts), std::move(on_apply_cb),
-                                                 std::move(send_fn), std::move(snap_provider),
+    // IO 经 Store Ready：persist_fn / transport_fn / apply_fn（不在 RaftNode 内回调）
+    auto node = std::make_shared<raft::RaftNode>(std::move(opts), nullptr, nullptr,
+                                                 std::move(snap_provider),
                                                  std::move(snap_applier));
     transport_.register_node(shard_id, cfg_.node_id, node);
     return node;
@@ -2142,8 +2144,7 @@ void StorageNode::start() {
            << " raft_peers=" << bootstrap_peers_.size() << " split_keys=" << auto_split_keys_
            << " split_bytes=" << auto_split_bytes_ << " merge_keys=" << auto_merge_keys_
            << " persist_sync=" << raft::sync_mode_name(raft::parse_sync_mode(cfg_.persist_sync))
-           << " raftstore=BatchSystem single_store_kv=1 scheduler=1"
-           << " rawnode_store=" << (rawnode_store ? 1 : 0);
+           << " raftstore=BatchSystem+Ready single_store_kv=1 scheduler=1";
 }
 
 void StorageNode::stop() {

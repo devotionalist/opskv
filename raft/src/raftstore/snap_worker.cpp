@@ -40,13 +40,40 @@ void SnapWorker::stop() {
   if (th_.joinable()) th_.join();
 }
 
+void SnapWorker::requeue_locked(SnapTask task) {
+  if (q_.size() >= opts_.queue_capacity) {
+    ++stats_.dropped;
+    SKV_WARN << "snap_worker requeue full drop region=" << task.region_id
+             << " attempt=" << task.attempt;
+    return;
+  }
+  q_.push_front(std::move(task));
+  ++stats_.retried;
+}
+
 bool SnapWorker::enqueue(SnapTask task) {
   std::lock_guard<std::mutex> lk(mu_);
+  if (opts_.coalesce_region) {
+    for (auto& existing : q_) {
+      if (existing.region_id == task.region_id) {
+        existing.meta = std::move(task.meta);
+        if (!task.data.empty()) existing.data = std::move(task.data);
+        // 合并后保留较小 attempt，避免已接近上限的任务被顶掉后立刻耗尽
+        if (task.attempt < existing.attempt) existing.attempt = task.attempt;
+        ++stats_.coalesced;
+        ++stats_.enqueued;
+        cv_.notify_one();
+        return true;
+      }
+    }
+  }
   if (q_.size() >= opts_.queue_capacity) {
+    ++stats_.dropped;
     SKV_WARN << "snap_worker queue full drop region=" << task.region_id;
     return false;
   }
   q_.push_back(std::move(task));
+  ++stats_.enqueued;
   cv_.notify_one();
   return true;
 }
@@ -54,6 +81,11 @@ bool SnapWorker::enqueue(SnapTask task) {
 size_t SnapWorker::depth() const {
   std::lock_guard<std::mutex> lk(mu_);
   return q_.size();
+}
+
+SnapWorker::Stats SnapWorker::stats() const {
+  std::lock_guard<std::mutex> lk(mu_);
+  return stats_;
 }
 
 void SnapWorker::loop() {
@@ -73,8 +105,20 @@ void SnapWorker::loop() {
         task.data = provider_(task.region_id, &task.meta);
       }
       if (sender_) sender_(task.region_id, task.meta, task.data);
+      {
+        std::lock_guard<std::mutex> lk(mu_);
+        ++stats_.sent;
+      }
     } catch (const std::exception& e) {
-      SKV_WARN << "snap_worker region=" << task.region_id << " err=" << e.what();
+      SKV_WARN << "snap_worker region=" << task.region_id << " attempt=" << task.attempt
+               << " err=" << e.what();
+      std::lock_guard<std::mutex> lk(mu_);
+      if (task.attempt < opts_.max_retries) {
+        ++task.attempt;
+        requeue_locked(std::move(task));
+      } else {
+        ++stats_.failed;
+      }
     }
   }
 }

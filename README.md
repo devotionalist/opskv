@@ -10,16 +10,18 @@
 Go Client / skv
       │ gRPC :19000
       ▼
-Compute Gateway (Go, 无状态)  ←── GET_ROUTE / LOCATE ──→  Meta Raft ×3 (:8500–8502)
-      │ Storage TCP
+Compute Gateway (Go, 无状态)  ←── MetaService gRPC ──→  Meta Raft ×3 (:8500–8502)
+      │ Store / Admin gRPC
       ▼
-Storage ×3 (:9100–9102)  · 每 Region 一组 Raft (RF=3) · RocksDB
+Storage ×N (:9100…)  · 每 Region 一组 Raft (RF=3) · RocksDB
+      │ RaftService gRPC（节点间）
+      └──────────► 其他 Storage
 ```
 
 | 组件 | 职责 |
 |------|------|
 | **compute-gateway** | 无状态：Range 路由、Leader 缓存、重试 |
-| **storage** | 有状态：Multi-Raft + RocksDB；`ADMIN_SPLIT` / `ADMIN_MERGE` |
+| **storage** | 有状态：Multi-Raft + RocksDB；Admin / Raft 同端口 gRPC |
 | **meta** | Region 表、拓扑、分裂/合并/扩容编排；**Raft 3 副本 HA** |
 | **client/go** | gRPC SDK |
 | **tools/skv** | C++ 运维 CLI（启停、put/get、locate/split/merge） |
@@ -27,11 +29,11 @@ Storage ×3 (:9100–9102)  · 每 Region 一组 Raft (RF=3) · RocksDB
 
 ![OpsKV 管控台总览](docs/images/console-overview.png)
 
-**用户手册：** [docs/USER_GUIDE.md](docs/USER_GUIDE.md) · [docs/](docs/)
+**文档：** [docs/README.md](docs/README.md)（用户手册 · 网络 · 架构 · 运维 · 测试 · 流程图）
 
-## 快速开始（本地 stub）
+## 快速开始（本地）
 
-不依赖 Seastar / gRPC C++ 也可跑通（Storage 捆绑 RocksDB；进程分配器默认 **jemalloc** FetchContent；Meta/Storage TCP + Go gRPC 网关）：
+默认路径：**强制 gRPC C++**（系统包或 FetchContent）；**不需要** Seastar（默认 `OPSKV_USE_SEASTAR=OFF`）。Storage 捆绑 RocksDB；进程分配器默认 **jemalloc**（FetchContent）。
 
 ```bash
 make          # configure + build + unit tests
@@ -67,20 +69,23 @@ make cluster-down
 cd client/go && go run ./examples/e2e -addr 127.0.0.1:19000
 ```
 
-可选完整依赖（网络栈 [scylladb/seastar](https://github.com/scylladb/seastar) 经 **FetchContent** 编进工程，同 RocksDB；**建议在 Linux**；macOS 默认 OFF）：
+### 依赖说明
+
+| 依赖 | 默认 | 说明 |
+|------|------|------|
+| **gRPC / Protobuf** | **强制 ON** | KV / Meta / Admin / 节点间 Raft；优先系统包，否则 FetchContent |
+| **RocksDB / jemalloc** | 捆绑 | FetchContent |
+| **Seastar** | **OFF** | 可选 reactor；**当前业务路径未使用**；建议仅 Linux 试验性打开 |
 
 ```bash
-# 系统依赖（boost/hwloc/…）只需装一次
+# 可选：仅 Linux 试验 Seastar（不改变 gRPC 协议面）
 sudo ./path/to/seastar/install-dependencies.sh
-
-cmake -B build \
-  -DOPSKV_USE_SEASTAR=ON \
-  -DOPSKV_USE_GRPC=ON
+cmake -B build -DOPSKV_USE_SEASTAR=ON
 # 可选钉版本：-DOPSKV_SEASTAR_GIT_TAG=seastar-25.05.0
 cmake --build build -j
 ```
 
-**gRPC 强制**（KV / Meta / Admin / Raft）。优先系统 Protobuf/gRPC；否则 FetchContent 拉 `grpc`（首次较慢）。
+细节：[docs/NETWORKING.md](docs/NETWORKING.md)。
 
 ## Kubernetes
 
@@ -105,13 +110,13 @@ val, found, rev, _ := cli.Get(ctx, []byte("k"))
 ```
 proto/      gRPC 定义
 common/    配置、Region、日志
-raft/      Multi-Raft
-storage/   RocksDB + Storage Node
-meta/      集群状态 + Scaler
+raft/      Multi-Raft + GrpcRaftTransport
+storage/   RocksDB + Storage Node（gRPC）
+meta/      集群状态 + Scaler（gRPC）
 client/go/ Go SDK + gateway
 tools/skv/ 运维 CLI
 web/       管控台
-docs/      用户文档
+docs/      全部文档（架构/运维/测试/流程图）
 deploy/    Docker / Helm
 conf/      本地配置
 ```

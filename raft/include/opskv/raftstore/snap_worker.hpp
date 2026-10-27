@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // @file snap_worker.hpp
-// 独立快照通道：与心跳/AE 路径隔离。
+// 独立快照通道：与心跳/AE 路径隔离；同 Region 合并、失败重试、Stats。
 
 #pragma once
 
@@ -21,6 +21,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <mutex>
@@ -36,6 +37,19 @@ class SnapWorker {
 
   struct Options {
     size_t queue_capacity{64};
+    /// 发送失败后最多再试次数（不含首次）；0=不重试。
+    uint32_t max_retries{2};
+    /// 队列中已有同 region 未发任务时合并（保留最新 meta/data）。
+    bool coalesce_region{true};
+  };
+
+  struct Stats {
+    uint64_t enqueued{0};
+    uint64_t dropped{0};
+    uint64_t coalesced{0};
+    uint64_t sent{0};
+    uint64_t failed{0};
+    uint64_t retried{0};
   };
 
   SnapWorker(Options opts, Provider provider, Sender sender);
@@ -45,9 +59,11 @@ class SnapWorker {
   void stop();
   bool enqueue(SnapTask task);
   size_t depth() const;
+  Stats stats() const;
 
  private:
   void loop();
+  void requeue_locked(SnapTask task);
 
   Options opts_;
   Provider provider_;
@@ -55,6 +71,7 @@ class SnapWorker {
   mutable std::mutex mu_;
   std::condition_variable cv_;
   std::deque<SnapTask> q_;
+  Stats stats_{};
   std::atomic<bool> running_{false};
   std::thread th_;
 };

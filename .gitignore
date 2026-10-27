@@ -18,8 +18,6 @@ data/
 .DS_Store
 log.entries.tmp
 
-# 内部策划 / 设计文档（不公开）
-.aplan/
 
 # IDE / 编辑器
 .idea/

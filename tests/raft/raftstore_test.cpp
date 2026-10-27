@@ -15,14 +15,19 @@
 // @file raftstore_test.cpp
 // Store / Router / Hibernate / Apply 队列 QoS 烟雾。
 
+#include "opskv/raftstore/snap_worker.hpp"
 #include "opskv/raftstore/store.hpp"
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <memory>
+#include <stdexcept>
 #include <thread>
 
 using opskv::raft::RaftNode;
+using opskv::raftstore::SnapTask;
+using opskv::raftstore::SnapWorker;
 using opskv::raftstore::Store;
 
 TEST(RaftstoreTest, StoreTickElectsLeader) {
@@ -81,4 +86,54 @@ TEST(RaftstoreTest, ApplyQosFlag) {
   });
   store.get_or_create(3);
   EXPECT_FALSE(store.apply_queue_overloaded(3));
+}
+
+TEST(SnapWorkerTest, CoalesceSameRegion) {
+  std::atomic<int> sends{0};
+  SnapWorker::Options opts;
+  opts.coalesce_region = true;
+  opts.queue_capacity = 8;
+  SnapWorker w(
+      opts, [](uint32_t, opskv::raft::SnapshotMeta*) { return std::string("blob"); },
+      [&](uint32_t, const opskv::raft::SnapshotMeta&, const std::string&) { ++sends; });
+  w.start();
+  SnapTask a;
+  a.region_id = 7;
+  a.data = "old";
+  SnapTask b;
+  b.region_id = 7;
+  b.data = "new";
+  EXPECT_TRUE(w.enqueue(std::move(a)));
+  EXPECT_TRUE(w.enqueue(std::move(b)));
+  for (int i = 0; i < 100 && sends.load() < 1; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  w.stop();
+  EXPECT_EQ(sends.load(), 1);
+  auto st = w.stats();
+  EXPECT_GE(st.coalesced, 1u);
+  EXPECT_EQ(st.sent, 1u);
+}
+
+TEST(SnapWorkerTest, RetryThenSucceed) {
+  std::atomic<int> calls{0};
+  SnapWorker::Options opts;
+  opts.max_retries = 2;
+  opts.coalesce_region = false;
+  SnapWorker w(
+      opts, [](uint32_t, opskv::raft::SnapshotMeta*) { return std::string("x"); },
+      [&](uint32_t, const opskv::raft::SnapshotMeta&, const std::string&) {
+        if (++calls <= 2) throw std::runtime_error("transient");
+      });
+  w.start();
+  SnapTask t;
+  t.region_id = 3;
+  EXPECT_TRUE(w.enqueue(std::move(t)));
+  for (int i = 0; i < 200 && w.stats().sent < 1; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  w.stop();
+  EXPECT_EQ(w.stats().sent, 1u);
+  EXPECT_GE(w.stats().retried, 1u);
+  EXPECT_GE(calls.load(), 3);
 }
